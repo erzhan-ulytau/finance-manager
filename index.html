@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Finance Manager v4</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function FinanceManager() {
+      const [transactions, setTransactions] = useState(() => {
+        try {
+          return JSON.parse(localStorage.getItem('fm_v4_tx') || '[]');
+        } catch {
+          return [];
+        }
+      });
+
+      const [categories, setCategories] = useState(() => {
+        const saved = localStorage.getItem('fm_v4_categories');
+        return saved ? JSON.parse(saved) : ['АЗС', 'Расходники', 'Аренда', 'Продукты', 'Другое'];
+      });
+
+      const [formData, setFormData] = useState({
+        type: 'expense',
+        name: '',
+        category: 'Другое',
+        amount: '',
+        paymentType: 'Наличные',
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', hour12: false }).slice(0, 5),
+        photo: null,
+        comment: ''
+      });
+
+      const [activeSection, setActiveSection] = useState('dashboard');
+      const [formStep, setFormStep] = useState(null);
+      const [notification, setNotification] = useState('');
+      const [deletedTx, setDeletedTx] = useState(null);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [expandedDates, setExpandedDates] = useState({});
+      const [dateFrom, setDateFrom] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
+      const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
+      const [wallets, setWallets] = useState([
+        { id: 'kaspi', name: '💳 Kaspi' },
+        { id: 'cash', name: '💵 Наличные' },
+        { id: 'halyk', name: '🏦 Halyk' }
+      ]);
+      const [customWallet, setCustomWallet] = useState('');
+      const [showAddWallet, setShowAddWallet] = useState(false);
+      const [customCategory, setCustomCategory] = useState('');
+      const [showAddCategory, setShowAddCategory] = useState(false);
+
+      const fileInputRef = useRef(null);
+      const photoInputRef = useRef(null);
+
+      const formatNumber = (num) => {
+        return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+      };
+
+      const getWalletBalance = (walletName) => {
+        return transactions
+          .filter(t => t.paymentType === walletName)
+          .reduce((sum, t) => sum + (t.type === 'income' ? t.amount : -t.amount), 0);
+      };
+
+      useEffect(() => {
+        localStorage.setItem('fm_v4_tx', JSON.stringify(transactions));
+      }, [transactions]);
+
+      useEffect(() => {
+        localStorage.setItem('fm_v4_categories', JSON.stringify(categories));
+      }, [categories]);
+
+      const getSearchResults = () => {
+        if (!searchQuery.trim()) return transactions;
+        const query = searchQuery.toLowerCase();
+        return transactions.filter(t =>
+          t.name.toLowerCase().includes(query) ||
+          t.category.toLowerCase().includes(query) ||
+          t.paymentType.toLowerCase().includes(query) ||
+          (t.comment && t.comment.toLowerCase().includes(query)) ||
+          t.amount.toString().includes(query)
+        );
+      };
+
+      const groupByDate = (txList) => {
+        const grouped = {};
+        txList.forEach(t => {
+          if (!grouped[t.date]) grouped[t.date] = [];
+          grouped[t.date].push(t);
+        });
+        return grouped;
+      };
+
+      const addWallet = () => {
+        if (!customWallet.trim()) return;
+        setWallets([...wallets, { id: Date.now().toString(), name: customWallet }]);
+        setCustomWallet('');
+        setShowAddWallet(false);
+        setNotification('✅ Кошелек добавлен!');
+        setTimeout(() => setNotification(''), 3000);
+      };
+
+      const addCategory = () => {
+        if (!customCategory.trim()) return;
+        if (categories.includes(customCategory)) {
+          setNotification('❌ Категория уже существует');
+          setTimeout(() => setNotification(''), 3000);
+          return;
+        }
+        setCategories([...categories, customCategory]);
+        setCustomCategory('');
+        setShowAddCategory(false);
+        setNotification('✅ Категория добавлена!');
+        setTimeout(() => setNotification(''), 3000);
+      };
+
+      const saveTransaction = () => {
+        if (!formData.name || !formData.amount) {
+          alert('Заполни имя и сумму');
+          return;
+        }
+
+        const newTx = {
+          id: Date.now(),
+          ...formData,
+          amount: parseFloat(formData.amount)
+        };
+
+        setTransactions([...transactions, newTx]);
+        resetForm();
+        setNotification('✅ Операция сохранена!');
+        setTimeout(() => setNotification(''), 3000);
+      };
+
+      const resetForm = () => {
+        setFormData({
+          type: 'expense',
+          name: '',
+          category: 'Другое',
+          amount: '',
+          paymentType: 'Наличные',
+          date: new Date().toISOString().split('T')[0],
+          time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', hour12: false }).slice(0, 5),
+          photo: null,
+          comment: ''
+        });
+        setFormStep(null);
+        setActiveSection('dashboard');
+      };
+
+      const deleteTransaction = (id) => {
+        const tx = transactions.find(t => t.id === id);
+        setDeletedTx(tx);
+        setTransactions(transactions.filter(t => t.id !== id));
+        setNotification('✅ Удалено (отмена за 5 сек)');
+        setTimeout(() => {
+          setDeletedTx(null);
+          setNotification('');
+        }, 5000);
+      };
+
+      const undoDelete = () => {
+        if (deletedTx) {
+          setTransactions([...transactions, deletedTx].sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time)));
+          setDeletedTx(null);
+          setNotification('');
+        }
+      };
+
+      const handlePhotoCapture = (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            setFormData({ ...formData, photo: event.target?.result });
+          };
+          reader.readAsDataURL(file);
+        }
+      };
+
+      const exportData = () => {
+        const data = {
+          exportDate: new Date().toISOString(),
+          version: '4.0',
+          transactions
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `finance-${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        setNotification('📥 Экспортировано!');
+        setTimeout(() => setNotification(''), 3000);
+      };
+
+      const importData = (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = JSON.parse(e.target?.result);
+            if (data.transactions && Array.isArray(data.transactions)) {
+              if (transactions.length > 0 && window.confirm('Заменить данные?')) {
+                setTransactions(data.transactions);
+                setNotification('✅ Данные заменены!');
+              } else if (transactions.length === 0) {
+                setTransactions(data.transactions);
+                setNotification('✅ Загружено!');
+              }
+              setTimeout(() => setNotification(''), 3000);
+            }
+          } catch {
+            alert('❌ Ошибка при загрузке');
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      if (activeSection === 'add' && formStep === null) {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4 pb-24">
+            <div className="bg-white rounded-2xl p-8 border border-slate-200 shadow-lg max-w-md w-full">
+              <h2 className="text-2xl font-bold mb-8 text-center">➕ Новая операция</h2>
+              <div className="space-y-4">
+                <button onClick={() => { setFormData({ ...formData, type: 'expense' }); setFormStep('name'); }} className="w-full bg-red-100 hover:bg-red-200 text-red-700 px-6 py-6 rounded-xl font-bold text-lg">💸 Расход</button>
+                <button onClick={() => { setFormData({ ...formData, type: 'income' }); setFormStep('name'); }} className="w-full bg-green-100 hover:bg-green-200 text-green-700 px-6 py-6 rounded-xl font-bold text-lg">💰 Доход</button>
+                <button onClick={() => setActiveSection('dashboard')} className="w-full bg-slate-300 hover:bg-slate-400 text-slate-700 px-6 py-3 rounded-xl font-semibold">Отмена</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (activeSection === 'add' && formStep) {
+        const steps = formData.type === 'income' 
+          ? ['name', 'amount', 'paymentType', 'datetime', 'comment', 'confirm']
+          : ['name', 'category', 'amount', 'paymentType', 'datetime', 'photo', 'comment', 'confirm'];
+        
+        const stepIdx = steps.indexOf(formStep);
+        const progress = ((stepIdx + 1) / steps.length) * 100;
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4 pb-24">
+            <div className="bg-white rounded-2xl p-8 border border-slate-200 shadow-lg max-w-md w-full">
+              <div className="mb-6">
+                <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }}></div>
+                </div>
+              </div>
+
+              {formStep === 'name' && (
+                <div>
+                  <label className="block text-sm font-semibold mb-3">Наименование</label>
+                  <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="Например: Бензин" className="w-full px-4 py-3 border-2 border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 mb-4" autoFocus />
+                  <div className="flex gap-2">
+                    <button onClick={() => setFormStep(null)} className="flex-1 bg-slate-300 text-slate-700 py-2 rounded-lg font-semibold">← Назад</button>
+                    <button onClick={() => formData.name && setFormStep(steps[stepIdx + 1])} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold">Далее →</button>
+                  </div>
+                </div>
+              )}
+
+              {formStep === 'category' && (
+                <div>
+                  <label className="block text-sm font-semibold mb-3">Категория</label>
+                  <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
+                    {categories.map(cat => (
+                      <button key={cat} onClick={() => setFormData({ ...formData, category: cat })} className={`w-full px-4 py-3 rounded-lg font-semibold ${formData.category === cat ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200'}`}>{cat}</button>
+                    ))}
+                  </div>
+                  {!showAddCategory ? (
+                    <button onClick={() => setShowAddCategory(true)} className="w-full bg-green-100 hover:bg-green-200 text-green-700 px-4 py-2 rounded-lg font-semibold mb-4">➕ Добавить категорию</button>
+                  ) : (
+                    <div className="space-y-2 mb-4">
+                      <input type="text" value={customCategory} onChange={(e) => setCustomCategory(e.target.value)} placeholder="Название" className="w-full px-3 py-2 border-2 border-slate-300 rounded-lg focus:outline-none focus:border-green-500" autoFocus />
+                      <div className="flex gap-2">
+                        <button onClick={addCategory} className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold">✓</button>
+                        <button onClick={() => { setShowAddCategory(false); setCustomCategory(''); }} className="flex-1 bg-slate-300 py-2 rounded-lg">✕</button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button onClick={() => setFormStep(steps[stepIdx - 1])} className="flex-1 bg-slate-300 text-slate-700 py-2 rounded-lg font-semibold">← Назад</button>
+                    <button onClick={() => setFormStep(steps[stepIdx + 1])} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold">Далее →</button>
+                  </div>
+                </div>
+              )}
+
+              {formStep === 'amount' && (
+                <div>
+                  <label className="block text-sm font-semibold mb-3">Сумма</label>
+                  <input type="text" value={formData.amount} onChange={(e) => setFormData({ ...formData, amount: e.target.value })} placeholder="0" inputMode="decimal" className="w-full px-4 py-3 text-4xl font-bold text-center border-2 border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 mb-4" autoFocus />
+                  <div className="text-center text-2xl font-bold text-slate-600 mb-4">₸</div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setFormStep(steps[stepIdx - 1])} className="flex-1 bg-slate-300 text-slate-700 py-2 rounded-lg font-semibold">← Назад</button>
+                    <button onClick={() => formData.amount && setFormStep(steps[stepIdx + 1])} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold">Далее →</button>
+                  </div>
+                </div>
+              )}
+
+              {formStep === 'paymentType' && (
+                <div>
+                  <label className="block text-sm font-semibold mb-3">Способ платежа</label>
+                  <div className="space-y-2 mb-4">
+                    {wallets.map(w => (
+                      <button key={w.id} onClick={() => setFormData({ ...formData, paymentType: w.name })} className={`w-full px-4 py-3 rounded-lg font-semibold ${formData.paymentType === w.name ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200'}`}>{w.name}</button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setFormStep(steps[stepIdx - 1])} className="flex-1 bg-slate-300 text-slate-700 py-2 rounded-lg font-semibold">← Назад</button>
+                    <button onClick={() => setFormStep(steps[stepIdx + 1])} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold">Далее →</button>
+                  </div>
+                </div>
+              )}
+
+              {formStep === 'datetime' && (
+                <div>
+                  <label className="block text-sm font-semibold mb-3">Дата и время</label>
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <input type="date" value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="px-3 py-2 border-2 border-slate-300 rounded-lg" />
+                    <input type="time" value={formData.time} onChange={(e) => setFormData({ ...formData, time: e.target.value })} className="px-3 py-2 border-2 border-slate-300 rounded-lg" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setFormStep(steps[stepIdx - 1])} className="flex-1 bg-slate-300 text-slate-700 py-2 rounded-lg font-semibold">← Назад</button>
+                    <button onClick={() => setFormStep(steps[stepIdx + 1])} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold">Далее →</button>
+                  </div>
+                </div>
+              )}
+
+              {formStep === 'photo' && (
+                <div>
+                  <label className="block text-sm font-semibold mb-3">📸 Фото (опционально)</label>
+                  {formData.photo && <img src={formData.photo} alt="Чек" className="w-full h-40 object-cover rounded-lg mb-3" />}
+                  <button onClick={() => photoInputRef.current?.click()} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-3 rounded-lg font-semibold mb-4">{formData.photo ? '✓ Фото добавлено' : '📷 Добавить фото'}</button>
+                  <input ref={photoInputRef} type="file" accept="image/*" onChange={handlePhotoCapture} className="hidden" />
+                  <div className="flex gap-2">
+                    <button onClick={() => setFormStep(steps[stepIdx - 1])} className="flex-1 bg-slate-300 text-slate-700 py-2 rounded-lg font-semibold">← Назад</button>
+                    <button onClick={() => setFormStep(steps[stepIdx + 1])} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold">Далее →</button>
+                  </div>
+                </div>
+              )}
+
+              {formStep === 'comment' && (
+                <div>
+                  <label className="block text-sm font-semibold mb-3">💬 Комментарий (опционально)</label>
+                  <textarea value={formData.comment || ''} onChange={(e) => setFormData({ ...formData, comment: e.target.value })} placeholder="Заметка..." className="w-full px-4 py-3 border-2 border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 mb-4 resize-none" rows={3} />
+                  <div className="flex gap-2">
+                    <button onClick={() => setFormStep(steps[stepIdx - 1])} className="flex-1 bg-slate-300 text-slate-700 py-2 rounded-lg font-semibold">← Назад</button>
+                    <button onClick={() => setFormStep(steps[stepIdx + 1])} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold">Далее →</button>
+                  </div>
+                </div>
+              )}
+
+              {formStep === 'confirm' && (
+                <div>
+                  <div className="bg-slate-50 rounded-lg p-4 mb-4 space-y-2 text-sm">
+                    <p><strong>Тип:</strong> {formData.type === 'expense' ? '💸 Расход' : '💰 Доход'}</p>
+                    <p><strong>Название:</strong> {formData.name}</p>
+                    {formData.type === 'expense' && <p><strong>Категория:</strong> {formData.category}</p>}
+                    <p><strong>Сумма:</strong> {formatNumber(parseFloat(formData.amount) || 0)} ₸</p>
+                    <p><strong>Кошелек:</strong> {formData.paymentType}</p>
+                    <p><strong>Дата:</strong> {formData.date} {formData.time}</p>
+                    {formData.comment && <p><strong>Комментарий:</strong> {formData.comment}</p>}
+                    {formData.photo && <p><strong>Фото:</strong> ✓ Добавлено</p>}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setFormStep(steps[stepIdx - 1])} className="flex-1 bg-slate-300 text-slate-700 py-2 rounded-lg font-semibold">← Назад</button>
+                    <button onClick={saveTransaction} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-semibold">✓ Сохранить</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      const totalBalance = transactions.reduce((sum, t) => sum + (t.type === 'income' ? t.amount : -t.amount), 0);
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-4 md:p-6 pb-24">
+          {activeSection === 'dashboard' && (
+            <div className="max-w-4xl mx-auto space-y-4">
+              <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm">
+                <p className="text-sm font-semibold text-slate-600 mb-2">💰 БАЛАНС</p>
+                <p className="text-4xl font-bold text-green-600 mb-4">{formatNumber(Math.floor(totalBalance))} ₸</p>
+                <div className="space-y-1 text-sm">
+                  {wallets.map(w => {
+                    const balance = getWalletBalance(w.name);
+                    if (balance === 0) return null;
+                    return (
+                      <p key={w.id}>
+                        <span className="text-slate-600">{w.name}:</span>
+                        <span className={`font-bold ml-2 ${balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {formatNumber(Math.floor(balance))} ₸
+                        </span>
+                      </p>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => setActiveSection('add')} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-4 rounded-xl font-semibold">➕ Добавить</button>
+                <button onClick={exportData} className="bg-green-600 hover:bg-green-700 text-white px-6 py-4 rounded-xl font-semibold">📥 Экспорт</button>
+                <button onClick={() => fileInputRef.current?.click()} className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-4 rounded-xl font-semibold">📤 Импорт</button>
+                <button onClick={() => setActiveSection('analytics')} className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-4 rounded-xl font-semibold">📊 Аналитика</button>
+                <input ref={fileInputRef} type="file" accept=".json" onChange={importData} className="hidden" />
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'history' && (
+            <div className="max-w-4xl mx-auto space-y-4">
+              <div className="bg-white rounded-lg p-3 border border-slate-200 flex gap-2">
+                <input type="text" placeholder="Поиск..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="flex-1 outline-none text-sm" />
+                {searchQuery && <button onClick={() => setSearchQuery('')} className="text-slate-400">✕</button>}
+              </div>
+
+              {getSearchResults().length === 0 ? (
+                <p className="text-center text-slate-500 py-8">Нет операций</p>
+              ) : (
+                Object.entries(groupByDate(getSearchResults()))
+                  .sort(([a], [b]) => b.localeCompare(a))
+                  .map(([date, dayTxs]) => (
+                    <div key={date} className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+                      <button onClick={() => setExpandedDates({ ...expandedDates, [date]: !expandedDates[date] })} className="w-full p-4 flex justify-between hover:bg-slate-50 font-semibold">
+                        <span>{new Date(date + 'T00:00').toLocaleDateString('ru-RU', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                        <span className="text-slate-500">{dayTxs.length}</span>
+                      </button>
+
+                      {expandedDates[date] && (
+                        <div className="border-t divide-y">
+                          {dayTxs.map(t => (
+                            <div key={t.id} className="p-4 hover:bg-slate-50">
+                              <div className="flex justify-between mb-2">
+                                <p className="font-semibold">{t.name}</p>
+                                <div className="text-right">
+                                  <p className={`font-bold text-lg ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                                    {t.type === 'income' ? '+' : '-'}{formatNumber(Math.floor(t.amount))} ₸
+                                  </p>
+                                  <p className="text-xs text-slate-500 font-semibold">{t.time}</p>
+                                </div>
+                              </div>
+                              <p className="text-sm text-slate-600">{t.category !== 'Другое' ? t.category + ' • ' : ''}{t.paymentType}</p>
+                              {t.comment && <p className="text-sm text-blue-600 mt-1">💬 {t.comment}</p>}
+                              {t.photo && <img src={t.photo} alt="Чек" className="w-20 h-20 object-cover rounded mt-2" />}
+                              <div className="flex gap-2 mt-2">
+                                <button onClick={() => deleteTransaction(t.id)} className="text-xs px-3 py-1 bg-red-100 text-red-600 rounded">Удалить</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+              )}
+            </div>
+          )}
+
+          {activeSection === 'wallets' && (
+            <div className="max-w-2xl mx-auto space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                {wallets.map(w => {
+                  const balance = getWalletBalance(w.name);
+                  return (
+                    <div key={w.id} className="bg-white rounded-lg p-4 border border-slate-200">
+                      <p className="text-sm text-slate-600 mb-2">{w.name}</p>
+                      <p className="text-2xl font-bold text-slate-900">{formatNumber(Math.floor(balance))} ₸</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {!showAddWallet ? (
+                <button onClick={() => setShowAddWallet(true)} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold">
+                  ➕ Добавить кошелек
+                </button>
+              ) : (
+                <div className="bg-white rounded-lg p-4 space-y-2">
+                  <input type="text" value={customWallet} onChange={(e) => setCustomWallet(e.target.value)} placeholder="Название" className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none" />
+                  <div className="flex gap-2">
+                    <button onClick={addWallet} className="flex-1 bg-green-600 text-white py-2 rounded-lg">✓</button>
+                    <button onClick={() => { setShowAddWallet(false); setCustomWallet(''); }} className="flex-1 bg-slate-300 py-2 rounded-lg">✕</button>
+                  </div>
+                </div>
+              )}
+
+              {!showTransfer ? (
+                <button onClick={() => setShowTransfer(true)} className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-lg font-semibold">
+                  ➡️ Перевод между кошельками
+                </button>
+              ) : (
+                <div className="bg-white rounded-lg p-4 space-y-3">
+                  <select value={transferFrom} onChange={(e) => setTransferFrom(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none">
+                    <option value="">От кошелька:</option>
+                    {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                  <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none">
+                    <option value="">На кошелек:</option>
+                    {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                  <input type="number" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} placeholder="Сумма ₸" inputMode="decimal" className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none" />
+                  <div className="flex gap-2">
+                    <button onClick={makeTransfer} className="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg font-semibold">✓ Перевести</button>
+                    <button onClick={() => { setShowTransfer(false); setTransferFrom(''); setTransferTo(''); setTransferAmount(''); }} className="flex-1 bg-slate-300 hover:bg-slate-400 py-2 rounded-lg font-semibold">✕ Отмена</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeSection === 'analytics' && (
+            <div className="max-w-2xl mx-auto space-y-4">
+              <div className="flex gap-2">
+                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="flex-1 px-3 py-2 border-2 border-slate-300 rounded-lg" />
+                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="flex-1 px-3 py-2 border-2 border-slate-300 rounded-lg" />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-green-50 rounded-lg p-4 text-center">
+                  <p className="text-sm text-slate-600">Доход</p>
+                  <p className="text-xl font-bold text-green-600">{formatNumber(Math.floor(transactions.filter(t => t.type === 'income' && t.date >= dateFrom && t.date <= dateTo).reduce((s, t) => s + t.amount, 0)))} ₸</p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-4 text-center">
+                  <p className="text-sm text-slate-600">Расход</p>
+                  <p className="text-xl font-bold text-red-600">{formatNumber(Math.floor(transactions.filter(t => t.type === 'expense' && t.date >= dateFrom && t.date <= dateTo).reduce((s, t) => s + t.amount, 0)))} ₸</p>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-4 text-center">
+                  <p className="text-sm text-slate-600">Баланс</p>
+                  <p className="text-xl font-bold text-blue-600">{formatNumber(Math.floor(transactions.filter(t => t.date >= dateFrom && t.date <= dateTo).reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0)))} ₸</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {notification && (
+            <div className="fixed bottom-24 md:bottom-6 left-4 right-4 md:left-auto md:right-6 bg-slate-900 text-white px-6 py-4 rounded-lg shadow-lg">
+              {notification}
+            </div>
+          )}
+
+          {deletedTx && (
+            <div className="fixed bottom-24 md:bottom-6 left-4 right-4 md:left-auto md:right-6 bg-slate-900 text-white px-6 py-3 rounded-lg flex justify-between items-center">
+              <span>Удалено</span>
+              <button onClick={undoDelete} className="ml-4 px-3 py-1 bg-white text-slate-900 rounded font-semibold">Отмена</button>
+            </div>
+          )}
+
+          <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around py-2">
+            {[{ icon: '📊', id: 'dashboard' }, { icon: '📜', id: 'history' }, { icon: '💳', id: 'wallets' }, { icon: '📈', id: 'analytics' }].map(item => (
+              <button key={item.id} onClick={() => setActiveSection(item.id)} className={`flex-1 py-3 text-center font-semibold ${activeSection === item.id ? 'text-blue-600 border-t-2 border-blue-600' : 'text-slate-600'}`}>
+                {item.icon}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<FinanceManager />);
+  </script>
+</body>
+</html>
