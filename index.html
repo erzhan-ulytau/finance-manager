@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Finance Manager v4</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function FinanceManager() {
+      const [transactions, setTransactions] = useState(() => {
+        try {
+          return JSON.parse(localStorage.getItem('fm_v4_tx') || '[]');
+        } catch {
+          return [];
+        }
+      });
+
+      const [categories, setCategories] = useState(() => {
+        const saved = localStorage.getItem('fm_v4_categories');
+        return saved ? JSON.parse(saved) : ['АЗС', 'Расходники', 'Аренда', 'Продукты', 'Другое'];
+      });
+
+      const [formData, setFormData] = useState({
+        type: 'expense',
+        name: '',
+        category: 'Другое',
+        amount: '',
+        paymentType: 'Наличные',
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', hour12: false }).slice(0, 5),
+        photo: null,
+        comment: ''
+      });
+
+      const [activeSection, setActiveSection] = useState('dashboard');
+      const [formStep, setFormStep] = useState(null);
+      const [notification, setNotification] = useState('');
+      const [deletedTx, setDeletedTx] = useState(null);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [expandedDates, setExpandedDates] = useState({});
+      const [dateFrom, setDateFrom] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
+      const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
+      const [wallets, setWallets] = useState([
+        { id: 'kaspi', name: '💳 Kaspi' },
+        { id: 'cash', name: '💵 Наличные' },
+        { id: 'halyk', name: '🏦 Halyk' }
+      ]);
+      const [customWallet, setCustomWallet] = useState('');
+      const [showAddWallet, setShowAddWallet] = useState(false);
+      const [showTransfer, setShowTransfer] = useState(false);
+      const [transferFrom, setTransferFrom] = useState('');
+      const [transferTo, setTransferTo] = useState('');
+      const [transferAmount, setTransferAmount] = useState('');
+      const [customCategory, setCustomCategory] = useState('');
+      const [showAddCategory, setShowAddCategory] = useState(false);
+
+      const fileInputRef = useRef(null);
+      const photoInputRef = useRef(null);
+
+      const formatNumber = (num) => {
+        return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+      };
+
+      const getWalletBalance = (walletName) => {
+        return transactions
+          .filter(t => t.paymentType === walletName)
+          .reduce((sum, t) => sum + (t.type === 'income' ? t.amount : -t.amount), 0);
+      };
+
+      useEffect(() => {
+        localStorage.setItem('fm_v4_tx', JSON.stringify(transactions));
+      }, [transactions]);
+
+      useEffect(() => {
+        localStorage.setItem('fm_v4_categories', JSON.stringify(categories));
+      }, [categories]);
+
+      const getSearchResults = () => {
+        if (!searchQuery.trim()) return transactions;
+        const query = searchQuery.toLowerCase();
+        return transactions.filter(t =>
+          t.name.toLowerCase().includes(query) ||
+          t.category.toLowerCase().includes(query) ||
+          t.paymentType.toLowerCase().includes(query) ||
+          (t.comment && t.comment.toLowerCase().includes(query)) ||
+          t.amount.toString().includes(query)
+        );
+      };
+
+      const groupByDate = (txList) => {
+        const grouped = {};
+        txList.forEach(t => {
+          if (!grouped[t.date]) grouped[t.date] = [];
+          grouped[t.date].push(t);
+        });
+        return grouped;
+      };
+
+      const addWallet = () => {
+        if (!customWallet.trim()) return;
+        setWallets([...wallets, { id: Date.now().toString(), name: customWallet }]);
+        setCustomWallet('');
+        setShowAddWallet(false);
+        setNotification('✅ Кошелек добавлен!');
+        setTimeout(() => setNotification(''), 3000);
+      };
+
+      const addCategory = () => {
+        if (!customCategory.trim()) return;
+        if (categories.includes(customCategory)) {
+          setNotification('❌ Категория уже существует');
+          setTimeout(() => setNotification(''), 3000);
+          return;
+        }
+        setCategories([...categories, customCategory]);
+        setCustomCategory('');
+        setShowAddCategory(false);
+        setNotification('✅ Категория добавлена!');
+        setTimeout(() => setNotification(''), 3000);
+      };
+
+      const makeTransfer = () => {
+        if (!transferFrom || !transferTo || !transferAmount) {
+          alert('❌ Заполни все поля');
+          return;
+        }
+        const amount = parseFloat(transferAmount);
+        if (isNaN(amount) || amount <= 0) {
+          alert('❌ Неверная сумма');
+          return;
+        }
+
+        const fromWallet = wallets.find(w => w.id === transferFrom)?.name || '';
+        const toWallet = wallets.find(w => w.id === transferTo)?.name || '';
+
+        setTransactions([...transactions, 
+          {
+            id: Date.now(),
+            name: `Перевод на ${toWallet}`,
+            category: 'Другое',
+            type: 'expense',
+            paymentType: fromWallet,
+            amount: amount,
+            date: new Date().toISOString().split('T')[0],
+            time: new Date().toTimeString().slice(0, 5),
+            photo: null,
+            comment: 'Перевод между кошельками'
+          },
+          {
+            id: Date.now() + 1,
+            name: `Получено с ${fromWallet}`,
+            category: 'Другое',
+            type: 'income',
+            paymentType: toWallet,
+            amount: amount,
+            date: new Date().toISOString().split('T')[0],
+            time: new Date().toTimeString().slice(0, 5),
+            photo: null,
+            comment: 'Перевод между кошельками'
+          }
+        ]);
+        setTransferFrom('');
+        setTransferTo('');
+        setTransferAmount('');
+        setShowTransfer(false);
+        setNotification('✅ Перевод выполнен!');
+        setTimeout(() => setNotification(''), 3000);
+      };
+
+      const saveTransaction = () => {
+        if (!formData.name || !formData.amount) {
+          alert('Заполни имя и сумму');
+          return;
+        }
+
+        const newTx = {
+          id: Date.now(),
+          ...formData,
+          amount: parseFloat(formData.amount)
+        };
+
+        setTransactions([...transactions, newTx]);
+        resetForm();
+        setNotification('✅ Операция сохранена!');
+        setTimeout(() => setNotification(''), 3000);
+      };
+
+      const resetForm = () => {
+        setFormData({
+          type: 'expense',
+          name: '',
+          category: 'Другое',
+          amount: '',
+          paymentType: 'Наличные',
+          date: new Date().toISOString().split('T')[0],
+          time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', hour12: false }).slice(0, 5),
+          photo: null,
+          comment: ''
+        });
+        setFormStep(null);
+        setActiveSection('dashboard');
+      };
+
+      const deleteTransaction = (id) => {
+        const tx = transactions.find(t => t.id === id);
+        setDeletedTx(tx);
+        setTransactions(transactions.filter(t => t.id !== id));
+        setNotification('✅ Удалено (отмена за 5 сек)');
+        setTimeout(() => {
+          setDeletedTx(null);
+          setNotification('');
+        }, 5000);
+      };
+
+      const undoDelete = () => {
+        if (deletedTx) {
+          setTransactions([...transactions, deletedTx]);
+          setDeletedTx(null);
+          setNotification('');
+        }
+      };
+
+      const handlePhotoCapture = (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            setFormData({ ...formData, photo: event.target?.result });
+          };
+          reader.readAsDataURL(file);
+        }
+      };
+
+      const exportData = () => {
+        const data = {
+          exportDate: new Date().toISOString(),
+          version: '4.0',
+          transactions
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `finance-${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        setNotification('📥 Экспортировано!');
+        setTimeout(() => setNotification(''), 3000);
+      };
+
+      const importData = (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = JSON.parse(e.target?.result);
+            if (data.transactions && Array.isArray(data.transactions)) {
+              if (transactions.length > 0 && window.confirm('Заменить данные?')) {
+                setTransactions(data.transactions);
+                setNotification('✅ Данные заменены!');
+              } else if (transactions.length === 0) {
+                setTransactions(data.transactions);
+                setNotification('✅ Загружено!');
+              }
+              setTimeout(() => setNotification(''), 3000);
+            }
+          } catch {
+            alert('❌ Ошибка при загрузке');
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      const totalBalance = transactions.reduce((sum, t) => sum + (t.type === 'income' ? t.amount : -t.amount), 0);
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-4 pb-24">
+          {activeSection === 'dashboard' && (
+            <div className="max-w-2xl mx-auto space-y-4">
+              <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm">
+                <p className="text-sm font-semibold text-slate-600 mb-2">💰 БАЛАНС</p>
+                <p className="text-4xl font-bold text-green-600 mb-4">{formatNumber(Math.floor(totalBalance))} ₸</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => setActiveSection('add')} className="bg-blue-600 text-white px-6 py-4 rounded-xl font-semibold">➕ Добавить</button>
+                <button onClick={exportData} className="bg-green-600 text-white px-6 py-4 rounded-xl font-semibold">📥 Экспорт</button>
+                <button onClick={() => fileInputRef.current?.click()} className="bg-purple-600 text-white px-6 py-4 rounded-xl font-semibold">📤 Импорт</button>
+                <button onClick={() => setActiveSection('analytics')} className="bg-orange-600 text-white px-6 py-4 rounded-xl font-semibold">📊 Аналитика</button>
+                <input ref={fileInputRef} type="file" accept=".json" onChange={importData} className="hidden" />
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'wallets' && (
+            <div className="max-w-2xl mx-auto space-y-4">
+              <h1 className="text-2xl font-bold text-slate-900 mb-4">💳 Кошельки</h1>
+              
+              <div className="grid grid-cols-2 gap-4">
+                {wallets.map(w => {
+                  const balance = getWalletBalance(w.name);
+                  return (
+                    <div key={w.id} className="bg-white rounded-lg p-4 border border-slate-200 shadow-sm">
+                      <p className="text-sm text-slate-600 mb-2">{w.name}</p>
+                      <p className="text-2xl font-bold text-slate-900">{formatNumber(Math.floor(balance))} ₸</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={() => setShowAddWallet(true)} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold">
+                ➕ Добавить кошелек
+              </button>
+
+              {showAddWallet && (
+                <div className="bg-white rounded-lg p-4 space-y-2 border border-slate-200">
+                  <input type="text" value={customWallet} onChange={(e) => setCustomWallet(e.target.value)} placeholder="Название" className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none" />
+                  <div className="flex gap-2">
+                    <button onClick={addWallet} className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold">✓ Добавить</button>
+                    <button onClick={() => { setShowAddWallet(false); setCustomWallet(''); }} className="flex-1 bg-slate-300 py-2 rounded-lg">✕ Отмена</button>
+                  </div>
+                </div>
+              )}
+
+              <button onClick={() => setShowTransfer(true)} className="w-full bg-purple-600 text-white py-3 rounded-lg font-semibold">
+                ➡️ Перевод между кошельками
+              </button>
+
+              {showTransfer && (
+                <div className="bg-white rounded-lg p-4 space-y-3 border border-slate-200">
+                  <select value={transferFrom} onChange={(e) => setTransferFrom(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none">
+                    <option value="">От кошелька:</option>
+                    {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                  <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none">
+                    <option value="">На кошелек:</option>
+                    {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                  <input type="number" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} placeholder="Сумма ₸" className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none" />
+                  <div className="flex gap-2">
+                    <button onClick={makeTransfer} className="flex-1 bg-purple-600 text-white py-2 rounded-lg font-semibold">✓ Перевести</button>
+                    <button onClick={() => { setShowTransfer(false); setTransferFrom(''); setTransferTo(''); setTransferAmount(''); }} className="flex-1 bg-slate-300 py-2 rounded-lg">✕ Отмена</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeSection === 'history' && (
+            <div className="max-w-2xl mx-auto space-y-4">
+              <h1 className="text-2xl font-bold text-slate-900 mb-4">📜 История</h1>
+              <div className="bg-white rounded-lg p-3 border border-slate-200 flex gap-2">
+                <input type="text" placeholder="Поиск..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="flex-1 outline-none text-sm" />
+                {searchQuery && <button onClick={() => setSearchQuery('')} className="text-slate-400">✕</button>}
+              </div>
+
+              {getSearchResults().length === 0 ? (
+                <p className="text-center text-slate-500 py-8">Нет операций</p>
+              ) : (
+                Object.entries(groupByDate(getSearchResults()))
+                  .sort(([a], [b]) => b.localeCompare(a))
+                  .map(([date, dayTxs]) => (
+                    <div key={date} className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+                      <button onClick={() => {}} className="w-full p-4 flex justify-between hover:bg-slate-50 font-semibold">
+                        <span>{new Date(date + 'T00:00').toLocaleDateString('ru-RU', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                        <span className="text-slate-500">{dayTxs.length}</span>
+                      </button>
+                      <div className="border-t divide-y">
+                        {dayTxs.map(t => (
+                          <div key={t.id} className="p-4">
+                            <div className="flex justify-between mb-2">
+                              <p className="font-semibold">{t.name}</p>
+                              <p className={`font-bold text-lg ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                                {t.type === 'income' ? '+' : '-'}{formatNumber(Math.floor(t.amount))} ₸
+                              </p>
+                            </div>
+                            <p className="text-sm text-slate-600">{t.paymentType}</p>
+                            <button onClick={() => deleteTransaction(t.id)} className="mt-2 text-xs px-3 py-1 bg-red-100 text-red-600 rounded">Удалить</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          )}
+
+          {activeSection === 'analytics' && (
+            <div className="max-w-2xl mx-auto space-y-4">
+              <h1 className="text-2xl font-bold text-slate-900 mb-4">📊 Аналитика</h1>
+              <div className="flex gap-2">
+                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="flex-1 px-3 py-2 border-2 border-slate-300 rounded-lg" />
+                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="flex-1 px-3 py-2 border-2 border-slate-300 rounded-lg" />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-green-50 rounded-lg p-4 text-center">
+                  <p className="text-sm text-slate-600">Доход</p>
+                  <p className="text-lg font-bold text-green-600">{formatNumber(Math.floor(transactions.filter(t => t.type === 'income' && t.date >= dateFrom && t.date <= dateTo).reduce((s, t) => s + t.amount, 0)))} ₸</p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-4 text-center">
+                  <p className="text-sm text-slate-600">Расход</p>
+                  <p className="text-lg font-bold text-red-600">{formatNumber(Math.floor(transactions.filter(t => t.type === 'expense' && t.date >= dateFrom && t.date <= dateTo).reduce((s, t) => s + t.amount, 0)))} ₸</p>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-4 text-center">
+                  <p className="text-sm text-slate-600">Баланс</p>
+                  <p className="text-lg font-bold text-blue-600">{formatNumber(Math.floor(transactions.filter(t => t.date >= dateFrom && t.date <= dateTo).reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0)))} ₸</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'add' && formStep === null && (
+            <div className="min-h-screen flex items-center justify-center">
+              <div className="bg-white rounded-2xl p-8 border border-slate-200 shadow-lg max-w-md w-full">
+                <h2 className="text-2xl font-bold mb-8 text-center">➕ Новая операция</h2>
+                <div className="space-y-4">
+                  <button onClick={() => { setFormData({ ...formData, type: 'expense' }); setFormStep('name'); }} className="w-full bg-red-100 text-red-700 px-6 py-6 rounded-xl font-bold text-lg">💸 Расход</button>
+                  <button onClick={() => { setFormData({ ...formData, type: 'income' }); setFormStep('name'); }} className="w-full bg-green-100 text-green-700 px-6 py-6 rounded-xl font-bold text-lg">💰 Доход</button>
+                  <button onClick={() => setActiveSection('dashboard')} className="w-full bg-slate-300 text-slate-700 px-6 py-3 rounded-xl font-semibold">Отмена</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {notification && (
+            <div className="fixed bottom-24 left-4 right-4 bg-slate-900 text-white px-6 py-4 rounded-lg shadow-lg">
+              {notification}
+            </div>
+          )}
+
+          <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around py-2">
+            {[{ icon: '📊', id: 'dashboard' }, { icon: '📜', id: 'history' }, { icon: '💳', id: 'wallets' }, { icon: '📈', id: 'analytics' }].map(item => (
+              <button key={item.id} onClick={() => setActiveSection(item.id)} className={`flex-1 py-3 text-center font-semibold ${activeSection === item.id ? 'text-blue-600 border-t-2 border-blue-600' : 'text-slate-600'}`}>
+                {item.icon}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<FinanceManager />);
+  </script>
+</body>
+</html>
